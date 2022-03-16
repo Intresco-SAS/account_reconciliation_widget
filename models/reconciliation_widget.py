@@ -135,7 +135,7 @@ class AccountReconciliation(models.AbstractModel):
             recs_count = 0
         aml_recs = self.env["account.move.line"].browse([i[0] for i in res])
         target_currency = (
-            st_line.currency_id
+            st_line.foreign_currency_id
             or st_line.journal_id.currency_id
             or st_line.journal_id.company_id.currency_id
         )
@@ -157,7 +157,9 @@ class AccountReconciliation(models.AbstractModel):
         self.env["res.partner.bank"]._apply_ir_rules(ir_rules_query, "read")
         from_clause, where_clause, where_clause_params = ir_rules_query.get_sql()
         if where_clause:
-            where_bank = ("AND %s" % where_clause).replace("res_partner_bank", "bank")
+            where_bank = ("AND %s" % where_clause).replace(
+                '"res_partner_bank"', '"bank"'
+            )
             params += where_clause_params
         else:
             where_bank = ""
@@ -169,7 +171,7 @@ class AccountReconciliation(models.AbstractModel):
         self.env["res.partner"]._apply_ir_rules(ir_rules_query, "read")
         from_clause, where_clause, where_clause_params = ir_rules_query.get_sql()
         if where_clause:
-            where_partner = ("AND %s" % where_clause).replace("res_partner", "p3")
+            where_partner = ("AND %s" % where_clause).replace('"res_partner"', '"p3"')
             params += where_clause_params
         else:
             where_partner = ""
@@ -255,7 +257,7 @@ class AccountReconciliation(models.AbstractModel):
                 aml_ids = matching_amls[line.id]["aml_ids"]
                 bank_statements_left += line.statement_id
                 target_currency = (
-                    line.currency_id
+                    line.foreign_currency_id
                     or line.journal_id.currency_id
                     or line.journal_id.company_id.currency_id
                 )
@@ -769,13 +771,23 @@ class AccountReconciliation(models.AbstractModel):
         domain_reconciliation = [
             "&",
             "&",
-            "&",
             ("statement_line_id", "=", False),
             ("account_id", "in", aml_accounts),
-            ("payment_id", "<>", False),
             ("balance", "!=", 0.0),
         ]
-
+        if st_line.company_id.account_bank_reconciliation_start:
+            domain_reconciliation = expression.AND(
+                [
+                    domain_reconciliation,
+                    [
+                        (
+                            "date",
+                            ">=",
+                            st_line.company_id.account_bank_reconciliation_start,
+                        )
+                    ],
+                ]
+            )
         # default domain matching
         domain_matching = [
             "&",
@@ -828,20 +840,6 @@ class AccountReconciliation(models.AbstractModel):
         # filter on account.move.line having the same company as the statement
         # line
         domain = expression.AND([domain, [("company_id", "=", st_line.company_id.id)]])
-
-        if st_line.company_id.account_bank_reconciliation_start:
-            domain = expression.AND(
-                [
-                    domain,
-                    [
-                        (
-                            "date",
-                            ">=",
-                            st_line.company_id.account_bank_reconciliation_start,
-                        )
-                    ],
-                ]
-            )
         return domain
 
     @api.model
@@ -1019,7 +1017,7 @@ class AccountReconciliation(models.AbstractModel):
         statement_currency = (
             st_line.journal_id.currency_id or st_line.journal_id.company_id.currency_id
         )
-        if st_line.amount_currency and st_line.currency_id:
+        if st_line.amount_currency and st_line.foreign_currency_id:
             amount = st_line.amount_currency
             amount_currency = st_line.amount
             amount_currency_str = formatLang(
@@ -1032,7 +1030,7 @@ class AccountReconciliation(models.AbstractModel):
         amount_str = formatLang(
             self.env,
             abs(amount),
-            currency_obj=st_line.currency_id or statement_currency,
+            currency_obj=st_line.foreign_currency_id or statement_currency,
         )
 
         data = {
@@ -1044,7 +1042,7 @@ class AccountReconciliation(models.AbstractModel):
             "date": format_date(self.env, st_line.date),
             "amount": amount,
             "amount_str": amount_str,  # Amount in the statement line currency
-            "currency_id": st_line.currency_id.id or statement_currency.id,
+            "currency_id": st_line.foreign_currency_id.id or statement_currency.id,
             "partner_id": st_line.partner_id.id,
             "journal_id": st_line.journal_id.id,
             "statement_id": st_line.statement_id.id,
