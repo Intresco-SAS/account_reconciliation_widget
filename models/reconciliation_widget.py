@@ -42,8 +42,13 @@ class AccountReconciliation(models.AbstractModel):
                 )
                 del aml_dict["counterpart_aml_id"]
 
+            vals = {}
             if datum.get("partner_id") is not None:
-                st_line.write({"partner_id": datum["partner_id"]})
+                vals["partner_id"] = datum["partner_id"]
+            if datum.get("ref") is not None:
+                vals["ref"] = datum["ref"]
+            if vals:
+                st_line.write(vals)
 
             ctx["default_to_check"] = datum.get("to_check")
             moves = st_line.with_context(ctx).process_reconciliation(
@@ -792,9 +797,11 @@ class AccountReconciliation(models.AbstractModel):
         domain_matching = [
             "&",
             "&",
+            "&",
             ("reconciled", "=", False),
             ("account_id.reconcile", "=", True),
             ("balance", "!=", 0.0),
+            ("parent_state", "=", "posted"),
         ]
 
         domain = expression.OR([domain_reconciliation, domain_matching])
@@ -846,7 +853,7 @@ class AccountReconciliation(models.AbstractModel):
     def _domain_move_lines_for_manual_reconciliation(
         self, account_id, partner_id=False, excluded_ids=None, search_str=False
     ):
-        """ Create domain criteria that are relevant to manual reconciliation. """
+        """Create domain criteria that are relevant to manual reconciliation."""
         domain = [
             "&",
             "&",
@@ -904,6 +911,7 @@ class AccountReconciliation(models.AbstractModel):
                 "already_paid": line.account_id.internal_type == "liquidity",
                 "account_code": line.account_id.code,
                 "account_name": line.account_id.name,
+                "analytic_account_code": line.analytic_account_id.display_name or "",
                 "account_type": line.account_id.internal_type,
                 "date_maturity": format_date(self.env, line.date_maturity),
                 "date": format_date(self.env, line.date),
@@ -1014,6 +1022,8 @@ class AccountReconciliation(models.AbstractModel):
         """Returns the data required by the bank statement reconciliation
         widget to display a statement line"""
 
+        group_analytic = self.env.user.has_group("analytic.group_analytic_accounting")
+        group_analytic_tags = self.env.user.has_group("analytic.group_analytic_tags")
         statement_currency = (
             st_line.journal_id.currency_id or st_line.journal_id.company_id.currency_id
         )
@@ -1060,6 +1070,8 @@ class AccountReconciliation(models.AbstractModel):
             "amount_currency": amount_currency,
             "has_no_partner": not st_line.partner_id.id,
             "company_id": st_line.company_id.id,
+            "group_analytic_accounting": group_analytic,
+            "group_analytic_tags": group_analytic_tags,
         }
         if st_line.partner_id:
             data["open_balance_account_id"] = (
@@ -1072,7 +1084,7 @@ class AccountReconciliation(models.AbstractModel):
 
     @api.model
     def _get_move_line_reconciliation_proposition(self, account_id, partner_id=None):
-        """ Returns two lines whose amount are opposite """
+        """Returns two lines whose amount are opposite"""
 
         Account_move_line = self.env["account.move.line"]
 
